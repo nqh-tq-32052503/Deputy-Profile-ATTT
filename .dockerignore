@@ -1,0 +1,42 @@
+# Git
+.git
+.gitignore
+
+# Python cache & bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment files with sensitive credentials
+.env
+.env.local
+
+# IDE & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs & temporary files
+logs/*.csv
+logs/*.log
+tmp/
+temp/
+
+# Documentation & large sample binaries (giữ lại API-trich-xuat-vbtl-hsdb-v5.md)
+sample_*.pdf
+sample_*.json
+khen_thuong_difficult_*.json
+chat_history.txt

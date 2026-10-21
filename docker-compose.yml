@@ -1,0 +1,31 @@
+services:
+  deputy-profiling-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: deputy-profiling-ai:latest
+    container_name: deputy-profiling-ai
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8000}:${APP_PORT:-8000}"
+    env_file:
+      - .env
+    environment:
+      - APP_HOST=0.0.0.0
+      - APP_PORT=${APP_PORT:-8000}
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Lưu trữ logs và các file CSV bảng đối soát thẩm định
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:${APP_PORT:-8000}/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - deputy-net
+
+networks:
+  deputy-net:
+    driver: bridge

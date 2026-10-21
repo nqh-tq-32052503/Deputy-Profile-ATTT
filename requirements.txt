@@ -1,0 +1,25 @@
+# Web Framework & Server
+fastapi>=0.110.0,<1.0.0
+uvicorn[standard]>=0.28.0,<1.0.0
+pydantic>=2.5.0,<3.0.0
+python-multipart>=0.0.9
+
+# HTTP Clients & Networking
+httpx>=0.27.0
+requests>=2.31.0
+urllib3>=2.0.0
+
+# PDF Processing
+pypdf>=4.0.0
+PyMuPDF>=1.24.0
+
+# Data & Excel Processing
+pandas>=2.0.0
+openpyxl>=3.1.0
+
+# Async & Environment Utilities
+python-dotenv>=1.0.0
+nest-asyncio>=1.6.0
+
+# Testing (optional)
+pytest>=8.0.0
