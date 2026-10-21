@@ -93,8 +93,8 @@ FORCE_REPROCESS_FORM_DESC = "Bỏ qua cache nếu đặt True"
 
 def concatenate_pdf_bytes(pdf_bytes_list: List[bytes]) -> bytes:
     """
-    Ghép (concatenate) danh sách bytes của nhiều file PDF thành 1 file PDF bytes duy nhất.
-    Ưu tiên sử dụng pypdf, tự động fallback sang fitz (PyMuPDF) nếu cần.
+    Ghép (concatenate) danh sách bytes của nhiều file PDF thành 1 file PDF bytes duy nhất bằng pypdf (BSD-3-Clause).
+    Nếu chỉ có 1 file, trả về nguyên bản không qua xử lý.
     """
     if not pdf_bytes_list:
         raise ValueError("Danh sách bytes file PDF rỗng.")
@@ -110,17 +110,7 @@ def concatenate_pdf_bytes(pdf_bytes_list: List[bytes]) -> bytes:
         writer.write(out)
         return out.getvalue()
     except Exception as err:
-        try:
-            import fitz
-            doc = fitz.open()
-            for b in pdf_bytes_list:
-                with fitz.open(stream=b, filetype="pdf") as sub_doc:
-                    doc.insert_pdf(sub_doc)
-            merged = doc.tobytes()
-            doc.close()
-            return merged
-        except Exception:
-            raise RuntimeError(f"Lỗi khi ghép các file PDF: {err}") from err
+        raise RuntimeError(f"Lỗi khi ghép các file PDF: {err}") from err
 
 
 def concatenate_pdf_files(files_data: List[Tuple[str, bytes]]) -> List[Tuple[str, bytes]]:
