@@ -22,6 +22,8 @@ import unicodedata
 
 import httpx
 
+from core.config import API_KEY
+
 # Thiết lập logging định dạng chuẩn
 logging.basicConfig(
     level=logging.INFO,
@@ -351,8 +353,9 @@ async def main_async(args):
 
     total_files = len(pdf_files)
     client_timeout = httpx.Timeout(timeout=float(args.timeout) + 30.0, connect=30.0)
+    headers = {"X-API-Key": API_KEY} if API_KEY else {}
 
-    async with httpx.AsyncClient(timeout=client_timeout) as client:
+    async with httpx.AsyncClient(timeout=client_timeout, headers=headers) as client:
         tasks = [
             process_single_file(
                 client=client,

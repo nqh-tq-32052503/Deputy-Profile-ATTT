@@ -22,19 +22,6 @@ class DocType(str, Enum):
     QUY_HOACH = "QUY_HOACH"             # 3.7 Phê duyệt quy hoạch chức danh
 
 
-# App & System
-API_VERSION = "4.2.0"
-APP_HOST = os.getenv("APP_HOST", "127.0.0.1")
-APP_PORT = int(os.getenv("APP_PORT", "8000"))
-APP_ENV = os.getenv("APP_ENV", "development")
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-
-# Files & Cache
-MAX_FILES = 5
-MAX_FILE_SIZE_BYTES = int(os.getenv("MAX_FILE_SIZE_MB", "30")) * 1024 * 1024
-ALLOWED_MIME_TYPES = {"application/pdf"}
-CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", str(24 * 3600)))
-
 def _parse_bool(val: Optional[str], default: bool) -> bool:
     if val is None or val.strip() == "":
         return default
@@ -52,6 +39,25 @@ def _parse_optional_bool(val: Optional[str], default: Optional[bool] = None) -> 
     if v in ("false", "0", "f", "no", "n"):
         return False
     return default
+
+
+# App & System
+API_VERSION = "4.2.0"
+APP_HOST = os.getenv("APP_HOST", "127.0.0.1")
+APP_PORT = int(os.getenv("APP_PORT", "8000"))
+APP_ENV = os.getenv("APP_ENV", "development")
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# API Key Authentication (BUG-1113) - Đọc duy nhất từ file .env
+API_KEY = os.getenv("API_KEY", "")
+REQUIRE_API_KEY = _parse_bool(os.getenv("REQUIRE_API_KEY"), default=True)
+
+# Files & Cache (BUG-1123)
+MAX_FILES = 5
+MIN_FILE_SIZE_BYTES = int(os.getenv("MIN_FILE_SIZE_BYTES", "100"))
+MAX_FILE_SIZE_BYTES = int(os.getenv("MAX_FILE_SIZE_MB", "30")) * 1024 * 1024
+ALLOWED_MIME_TYPES = {"application/pdf"}
+CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", str(24 * 3600)))
 
 
 # OCR Service

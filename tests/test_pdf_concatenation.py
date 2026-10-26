@@ -70,7 +70,9 @@ class TestPdfConcatenationUtils:
 class TestPipelineWithPdfConcatenation:
     @pytest.fixture
     def client(self):
-        return TestClient(app.app)
+        from core.config import API_KEY
+        headers = {"X-API-Key": API_KEY} if API_KEY else {}
+        return TestClient(app.app, headers=headers)
 
     def test_extract_endpoint_single_file_passes_single(self, client):
         pdf1 = _create_sample_pdf(num_pages=1)

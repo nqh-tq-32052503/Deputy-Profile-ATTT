@@ -11,8 +11,9 @@ urllib3>=2.8.0
 charset-normalizer>=3.3.0
 msgpack>=1.2.1
 
-# PDF Processing
+# PDF & File Inspection
 pypdf>=4.0.0
+filetype>=1.2.0
 
 
 # Async & Environment Utilities

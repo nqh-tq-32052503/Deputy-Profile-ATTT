@@ -9,7 +9,7 @@ from pypdf import PdfWriter
 
 from app import app, tasks_store
 from core.cache import CacheManager, cache_manager
-from core.config import API_VERSION, DocType
+from core.config import API_KEY, API_VERSION, DocType, MIN_FILE_SIZE_BYTES
 from core.exceptions import (
     LLMTimeoutError,
     OCRConnectionError,
@@ -30,8 +30,9 @@ def make_dummy_pdf() -> bytes:
 
 @pytest.fixture
 def client():
-    """FastAPI TestClient fixture."""
-    with TestClient(app) as test_client:
+    """FastAPI TestClient fixture có kèm header X-API-Key hợp lệ."""
+    headers = {"X-API-Key": API_KEY} if API_KEY else {}
+    with TestClient(app, headers=headers) as test_client:
         yield test_client
 
 
@@ -140,6 +141,82 @@ class TestExtractValidation:
             )
             check(response.status_code == 413)
             check("dung lượng vượt quá giới hạn" in response.json()["detail"])
+
+    def test_file_size_below_minimum(self, client):
+        """File có dung lượng nhỏ hơn MIN_FILE_SIZE_BYTES phải bị từ chối với HTTP 400 (BUG-1123)."""
+        tiny_bytes = b"%PDF"  # chỉ có 4 bytes
+        response = client.post(
+            "/hsdb/extract",
+            data={"doc_type": DocType.QTCT.value},
+            files=[("files", ("tiny.pdf", tiny_bytes, "application/pdf"))],
+        )
+        check(response.status_code == 400)
+        check("quá nhỏ" in response.json()["detail"])
+
+    def test_fake_pdf_magic_bytes_invalid(self, client):
+        """File có đuôi .pdf nhưng nội dung text giả mạo phải bị phát hiện qua Magic Bytes HTTP 415 (BUG-1123)."""
+        fake_content = b"This is plain text pretending to be a pdf file." * 5  # > 100 bytes
+        response = client.post(
+            "/hsdb/extract",
+            data={"doc_type": DocType.QTCT.value},
+            files=[("files", ("fake.pdf", fake_content, "application/pdf"))],
+        )
+        check(response.status_code == 415)
+        check("Magic bytes không khớp" in response.json()["detail"])
+
+    def test_corrupt_pdf_structure(self, client):
+        """File có Magic Bytes %PDF- nhưng cấu trúc hỏng không đọc được bằng pypdf phải trả về HTTP 400 (BUG-1123)."""
+        corrupt_content = b"%PDF-1.4\n" + b"Corrupted invalid PDF body stream without xref or pages" * 5
+        response = client.post(
+            "/hsdb/extract",
+            data={"doc_type": DocType.QTCT.value},
+            files=[("files", ("corrupted.pdf", corrupt_content, "application/pdf"))],
+        )
+        check(response.status_code == 400)
+        check("bị hỏng cấu trúc" in response.json()["detail"] or "không thể phân tích cú pháp" in response.json()["detail"])
+
+
+# ==============================================================================
+# TEST API KEY AUTHENTICATION (BUG-1113)
+# ==============================================================================
+
+
+class TestApiKeyAuthentication:
+    def test_extract_without_api_key_returns_401(self):
+        """Gọi POST /hsdb/extract không có header X-API-Key phải trả về HTTP 401."""
+        raw_client = TestClient(app)
+        pdf_bytes = make_dummy_pdf()
+        response = raw_client.post(
+            "/hsdb/extract",
+            data={"doc_type": DocType.QTCT.value},
+            files=[("files", ("test.pdf", pdf_bytes, "application/pdf"))],
+        )
+        check(response.status_code == 401)
+        check("Thiếu API Key xác thực" in response.json()["detail"])
+
+    def test_extract_with_invalid_api_key_returns_401(self):
+        """Gọi POST /hsdb/extract với X-API-Key sai phải trả về HTTP 401."""
+        raw_client = TestClient(app, headers={"X-API-Key": "wrong-key"})
+        pdf_bytes = make_dummy_pdf()
+        response = raw_client.post(
+            "/hsdb/extract",
+            data={"doc_type": DocType.QTCT.value},
+            files=[("files", ("test.pdf", pdf_bytes, "application/pdf"))],
+        )
+        check(response.status_code == 401)
+        check("API Key không hợp lệ" in response.json()["detail"])
+
+    def test_poll_without_api_key_returns_401(self):
+        """Gọi GET /hsdb/extract/{request_id} không có header X-API-Key phải trả về HTTP 401."""
+        raw_client = TestClient(app)
+        response = raw_client.get("/hsdb/extract/some-request-id")
+        check(response.status_code == 401)
+
+    def test_health_check_does_not_require_api_key(self):
+        """GET /health không yêu cầu API Key."""
+        raw_client = TestClient(app)
+        response = raw_client.get("/health")
+        check(response.status_code == 200)
 
 
 # ==============================================================================

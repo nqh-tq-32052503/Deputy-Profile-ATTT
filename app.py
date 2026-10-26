@@ -2,19 +2,36 @@ import asyncio
 import io
 from datetime import datetime, timezone
 import os
+import secrets
 import time
 from typing import Any, Dict, List, Optional, Tuple
 import uuid
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile, status
+import filetype
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Security,
+    UploadFile,
+    status,
+)
 from fastapi.openapi.utils import get_openapi
+from fastapi.security import APIKeyHeader
+from pypdf import PdfReader
 
 from core.cache import CacheManager, cache_manager
 from core.config import (
     ALLOWED_MIME_TYPES,
+    API_KEY,
     API_VERSION,
     MAX_FILE_SIZE_BYTES,
     MAX_FILES,
+    MIN_FILE_SIZE_BYTES,
+    REQUIRE_API_KEY,
     DocType,
 )
 from core.exceptions import DeputyProfilingException
@@ -282,6 +299,44 @@ async def process_document_task(
         }
 
 
+# Cấu hình xác thực API Key qua header X-API-Key (BUG-1113)
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+async def verify_api_key(
+    x_api_key: Optional[str] = Security(api_key_header),
+) -> Optional[str]:
+    """
+    Xác thực API Key qua header X-API-Key cho các endpoint bóc tách (BUG-1113).
+    API Key chỉ được cấu hình và nạp từ file .env.
+    """
+    if not REQUIRE_API_KEY:
+        return x_api_key
+
+    if not API_KEY:
+        logger.error("Hệ thống chưa được thiết lập API_KEY trong file .env.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Dịch vụ chưa được cấu hình API Key bảo mật trong file .env.",
+        )
+
+    if not x_api_key:
+        logger.warning("Từ chối truy cập: Thiếu header 'X-API-Key'.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Thiếu API Key xác thực. Vui lòng cung cấp header 'X-API-Key'.",
+        )
+
+    if not secrets.compare_digest(x_api_key, API_KEY):
+        logger.warning("Từ chối truy cập: 'X-API-Key' không chính xác.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API Key không hợp lệ.",
+        )
+
+    return x_api_key
+
+
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 async def health_check():
     """
@@ -293,7 +348,9 @@ async def health_check():
 async def _read_and_validate_upload_files(
     files: List[UploadFile],
 ) -> Tuple[List[tuple], List[bytes]]:
-    """Validate số lượng, định dạng, dung lượng các file upload và ghép file nếu cần."""
+    """
+    Validate số lượng, phần mở rộng, dung lượng, Magic Bytes và tính hợp lệ của cấu trúc PDF (BUG-1123).
+    """
     if not files or len(files) == 0:
         logger.warning("Từ chối yêu cầu: Không có file PDF nào được gửi lên.")
         raise HTTPException(
@@ -309,16 +366,31 @@ async def _read_and_validate_upload_files(
 
     files_data: List[tuple] = []
     file_bytes_list: List[bytes] = []
+
     for upload_file in files:
         filename = upload_file.filename or "unknown.pdf"
-        if not filename.lower().endswith(".pdf") and upload_file.content_type not in ALLOWED_MIME_TYPES:
-            logger.warning(f"Từ chối yêu cầu: File '{filename}' có định dạng không được hỗ trợ ({upload_file.content_type}).")
+
+        # 1.1. Kiểm tra phần mở rộng đuôi file (.pdf)
+        if not filename.lower().endswith(".pdf"):
+            logger.warning(f"Từ chối yêu cầu: File '{filename}' không có phần mở rộng .pdf hợp lệ.")
             raise HTTPException(
                 status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-                detail=f"File '{filename}' không phải là định dạng PDF hợp lệ.",
+                detail=f"File '{filename}' không phải là định dạng PDF hợp lệ (yêu cầu đuôi file .pdf).",
             )
 
         content = await upload_file.read()
+
+        # 1.2. Kiểm tra kích thước tối thiểu và tối đa
+        if len(content) < MIN_FILE_SIZE_BYTES:
+            logger.warning(
+                f"Từ chối yêu cầu: File '{filename}' có dung lượng ({len(content)} bytes) "
+                f"nhỏ hơn kích thước tối thiểu ({MIN_FILE_SIZE_BYTES} bytes)."
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File '{filename}' rỗng hoặc dung lượng quá nhỏ ({len(content)} bytes), không phải là file PDF hợp lệ.",
+            )
+
         if len(content) > MAX_FILE_SIZE_BYTES:
             logger.warning(
                 f"Từ chối yêu cầu: File '{filename}' dung lượng {len(content):,} bytes "
@@ -327,6 +399,31 @@ async def _read_and_validate_upload_files(
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail=f"File '{filename}' có dung lượng vượt quá giới hạn 30MB.",
+            )
+
+        # 2. Kiểm tra Magic Bytes bằng thư viện filetype
+        kind = filetype.guess(content)
+        if kind is None or kind.mime != "application/pdf":
+            detected_type = kind.mime if kind else "Không xác định"
+            logger.warning(
+                f"Từ chối yêu cầu: File '{filename}' có Magic bytes không khớp với PDF "
+                f"(nhận diện: {detected_type})."
+            )
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail=f"Nội dung file '{filename}' không phải là định dạng PDF hợp lệ (Magic bytes không khớp).",
+            )
+
+        # 3. Đọc thử file PDF bằng thư viện pypdf
+        try:
+            reader = PdfReader(io.BytesIO(content))
+            if len(reader.pages) == 0:
+                raise ValueError("File PDF rỗng, không chứa trang tài liệu nào.")
+        except Exception as e:
+            logger.warning(f"Từ chối yêu cầu: File '{filename}' bị lỗi cấu trúc PDF khi đọc bằng pypdf: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File '{filename}' bị hỏng cấu trúc hoặc không thể phân tích cú pháp PDF: {e}",
             )
 
         files_data.append((filename, content))
@@ -344,6 +441,7 @@ async def _read_and_validate_upload_files(
     response_model=ExtractInitResponse,
     status_code=status.HTTP_200_OK,
     tags=["Extraction"],
+    dependencies=[Depends(verify_api_key)],
 )
 async def extract_document(
     background_tasks: BackgroundTasks,
@@ -422,6 +520,7 @@ async def extract_document(
     "/hsdb/extract/{request_id}",
     response_model=ExtractPollResponse,
     tags=["Extraction"],
+    dependencies=[Depends(verify_api_key)],
 )
 async def get_extraction_status(request_id: str):
     """
