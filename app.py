@@ -15,11 +15,13 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Request,
     Security,
     UploadFile,
     status,
 )
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 from pypdf import PdfReader
 
@@ -164,7 +166,7 @@ def concatenate_pdf_files(files_data: List[Tuple[str, bytes]]) -> List[Tuple[str
         logger.exception(f"Lỗi khi ghép các file PDF: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Lỗi khi ghép các file PDF đã tải lên: {e}",
+            detail="Lỗi khi ghép các file PDF đã tải lên. Vui lòng kiểm tra lại tính toàn vẹn của tệp.",
         )
 
 
@@ -293,7 +295,7 @@ async def process_document_task(
             "result": None,
             "error": {
                 "code": "INTERNAL_PROCESSING_ERROR",
-                "message": str(e),
+                "message": "Đã xảy ra lỗi nội bộ trong quá trình xử lý tài liệu.",
             },
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -335,6 +337,26 @@ async def verify_api_key(
         )
 
     return x_api_key
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """
+    Bắt mọi exception chưa được xử lý để ngăn chặn lộ chuỗi exception ra client (BUG-1120).
+    Ghi chi tiết traceback vào logger server, chỉ trả message thông báo chung an toàn cho client.
+    """
+    if isinstance(exc, HTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+            headers=exc.headers,
+        )
+
+    logger.exception(f"Unhandled exception tại {request.method} {request.url.path}: {exc}")
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Đã xảy ra lỗi máy chủ nội bộ. Vui lòng thử lại sau."},
+    )
 
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
@@ -423,7 +445,7 @@ async def _read_and_validate_upload_files(
             logger.warning(f"Từ chối yêu cầu: File '{filename}' bị lỗi cấu trúc PDF khi đọc bằng pypdf: {e}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"File '{filename}' bị hỏng cấu trúc hoặc không thể phân tích cú pháp PDF: {e}",
+                detail=f"File '{filename}' bị hỏng cấu trúc hoặc không thể phân tích cú pháp PDF.",
             )
 
         files_data.append((filename, content))

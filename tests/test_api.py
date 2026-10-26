@@ -707,3 +707,58 @@ CHỦ NHIỆM: Nguyễn Hạnh Phúc
         task = tasks_store.get(req_id)
         check(task["status"] == ProcessStatus.FINISHED)
         check(task["result"]["doc_type"] == doc_type.value)
+
+
+# ==============================================================================
+# TEST ERROR SANITIZATION & EXCEPTION MASKING (BUG-1120)
+# ==============================================================================
+
+
+class TestErrorSanitization:
+    def test_unhandled_task_exception_masks_raw_message(self):
+        """Lỗi hệ thống bất ngờ trong task không được làm lộ chuỗi exception ra client."""
+        from app import process_document_task
+
+        async def run():
+            req_id = "test-sanitize-task-err"
+            pdf_bytes = make_dummy_pdf()
+            files_data = [("test.pdf", pdf_bytes)]
+
+            # Giả lập lỗi chứa thông tin nhạy cảm nội bộ (vd: secret, host, driver message)
+            sensitive_error_msg = "ConnectionRefused: Failed to connect to internal postgresql://user:secret@10.0.0.1:5432/db"
+
+            with patch("app.ocr_service.aextract_full", side_effect=RuntimeError(sensitive_error_msg)):
+                await process_document_task(
+                    request_id=req_id,
+                    doc_type_enum=DocType.QTCT,
+                    files_data=files_data,
+                    cache_key="fake-cache-key",
+                )
+
+            task = tasks_store.get(req_id)
+            check(task["status"] == ProcessStatus.FAILED)
+            check(task["error"]["code"] == "INTERNAL_PROCESSING_ERROR")
+            # Chuỗi nhạy cảm tuyệt đối không được xuất hiện trong message trả về client
+            check(sensitive_error_msg not in task["error"]["message"])
+            check("secret" not in task["error"]["message"])
+            check(task["error"]["message"] == "Đã xảy ra lỗi nội bộ trong quá trình xử lý tài liệu.")
+
+        import asyncio
+        asyncio.run(run())
+
+    def test_global_exception_handler_masks_route_exception(self):
+        """Exception chưa bắt trong route API không được lộ ra client và trả HTTP 500 với message chung."""
+        sensitive_route_msg = "Sensitive DB Driver failure with credentials in memory"
+
+        client_no_raise = TestClient(app, raise_server_exceptions=False, headers={"X-API-Key": API_KEY})
+        with patch("app._read_and_validate_upload_files", side_effect=RuntimeError(sensitive_route_msg)):
+            pdf_bytes = make_dummy_pdf()
+            response = client_no_raise.post(
+                "/hsdb/extract",
+                data={"doc_type": DocType.QTCT.value},
+                files=[("files", ("test.pdf", pdf_bytes, "application/pdf"))],
+            )
+            check(response.status_code == 500)
+            data = response.json()
+            check(sensitive_route_msg not in data.get("detail", ""))
+            check(data["detail"] == "Đã xảy ra lỗi máy chủ nội bộ. Vui lòng thử lại sau.")
