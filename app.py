@@ -53,10 +53,17 @@ from services.ocr_service import OCRService
 # Cấu hình logging chuẩn
 logger = setup_logger("app")
 
+# BUG-1122: Vô hiệu hóa tài liệu API trên production theo mặc định.
+# Chỉ bật khi chủ động khai báo API_DOCS_ENABLED=true (ví dụ môi trường development).
+API_DOCS_ENABLED = os.getenv("API_DOCS_ENABLED", "false").strip().lower() == "true"
+
 app = FastAPI(
     title="Deputy Profiling AI Service",
     description="Dịch vụ AI trích xuất thông tin văn bản Hồ sơ Đại biểu (HSĐB)",
     version=API_VERSION,
+    docs_url="/docs" if API_DOCS_ENABLED else None,
+    redoc_url="/redoc" if API_DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if API_DOCS_ENABLED else None,
 )
 
 
